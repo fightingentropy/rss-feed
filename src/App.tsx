@@ -10,6 +10,8 @@ import {
   Plus,
   Trash2,
   RotateCcw,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -31,7 +33,9 @@ function sanitizeHtml(html: string): string {
 function formatDate(pubDate?: string) {
   if (!pubDate) return ''
   const d = new Date(pubDate)
-  return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { dateStyle: 'short' })
+  return isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 }
 
 function cloneDefaultFeeds(): FeedMeta[] {
@@ -64,7 +68,16 @@ function getInitialFeedSources(): FeedMeta[] {
       }))
       .filter((item) => item.id.length > 0)
 
-    return valid.length ? valid : cloneDefaultFeeds()
+    if (valid.length === 0) return cloneDefaultFeeds()
+
+    const defaultById = new Map(POPULAR_FEEDS.map((f) => [f.id, { title: f.title, url: f.url }]))
+    const savedIds = new Set(valid.map((s) => s.id))
+    const repaired = valid.map((s) => {
+      const d = defaultById.get(s.id)
+      return d ? { id: s.id, title: d.title, url: d.url } : s
+    })
+    const missingDefaults = POPULAR_FEEDS.filter((feed) => !savedIds.has(feed.id)).map((feed) => ({ ...feed }))
+    return [...repaired, ...missingDefaults]
   } catch {
     return cloneDefaultFeeds()
   }
@@ -201,6 +214,18 @@ function App() {
     setFeedSources(cloneDefaultFeeds())
   }, [])
 
+  const moveFeedSource = useCallback((sourceId: string, direction: 'up' | 'down') => {
+    setFeedSources((prev) => {
+      const i = prev.findIndex((s) => s.id === sourceId)
+      if (i === -1) return prev
+      const j = direction === 'up' ? i - 1 : i + 1
+      if (j < 0 || j >= prev.length) return prev
+      const next = [...prev]
+      ;[next[i], next[j]] = [next[j], next[i]]
+      return next
+    })
+  }, [])
+
   return (
     <div className="flex h-screen flex-col bg-terminal-bg font-mono text-terminal-text">
       {/* Terminal title bar */}
@@ -227,16 +252,8 @@ function App() {
         <div className="flex min-h-0 flex-1">
           {/* Sidebar: feed list */}
           <aside className="w-56 shrink-0 border-r border-terminal-border bg-terminal-bg">
-            <div className="flex items-center justify-between border-b border-terminal-border px-3 py-2">
+            <div className="border-b border-terminal-border px-3 py-2">
               <span className="text-xs uppercase tracking-wider text-terminal-muted">Feeds</span>
-              <Button
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => setView('settings')}
-                title="Manage feed sources"
-              >
-                <SettingsIcon className="h-3 w-3" />
-              </Button>
             </div>
             <ScrollArea className="h-[calc(100vh-3.5rem)]">
               <nav className="p-2">
@@ -390,22 +407,42 @@ function App() {
               </Card>
 
               <div className="grid gap-3">
-                {feedSources.map((source) => (
+                {feedSources.map((source, index) => (
                   <Card key={source.id} className="p-3">
                     <CardContent className="space-y-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="truncate text-xs text-terminal-muted">
                           id: <span className="text-terminal-accent">{source.id}</span>
                         </div>
-                        <Button
-                          variant="ghost"
-                          onClick={() => removeFeedSource(source.id)}
-                          className="h-7 px-2 text-xs text-red-300 hover:text-red-200"
-                          title={`Remove ${source.title || source.id}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Remove
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            className="h-7 w-7 shrink-0 p-0 text-terminal-muted hover:text-terminal-accent"
+                            onClick={() => moveFeedSource(source.id, 'up')}
+                            disabled={index === 0}
+                            title="Move up"
+                          >
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            className="h-7 w-7 shrink-0 p-0 text-terminal-muted hover:text-terminal-accent"
+                            onClick={() => moveFeedSource(source.id, 'down')}
+                            disabled={index === feedSources.length - 1}
+                            title="Move down"
+                          >
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            onClick={() => removeFeedSource(source.id)}
+                            className="h-7 px-2 text-xs text-red-300 hover:text-red-200"
+                            title={`Remove ${source.title || source.id}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Remove
+                          </Button>
+                        </div>
                       </div>
 
                       <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">

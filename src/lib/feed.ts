@@ -77,6 +77,15 @@ function isFresh(record: CachedFeedRecord): boolean {
   return Date.now() - record.cachedAt < FEED_CACHE_TTL_MS
 }
 
+function sortFeedItemsByDate(feed: ParsedFeed): ParsedFeed {
+  const sorted = [...feed.items].sort((a, b) => {
+    const dateA = a.pubDate ? new Date(a.pubDate).getTime() : 0
+    const dateB = b.pubDate ? new Date(b.pubDate).getTime() : 0
+    return dateB - dateA
+  })
+  return { ...feed, items: sorted }
+}
+
 function readCachedFeed(feedUrl: string): ParsedFeed | null {
   const fromMemory = memoryCache.get(feedUrl)
   if (fromMemory) {
@@ -135,7 +144,7 @@ function writeCachedFeed(feedUrl: string, data: ParsedFeed): void {
 
 export async function fetchFeed(feedUrl: string): Promise<ParsedFeed> {
   const cached = readCachedFeed(feedUrl)
-  if (cached) return cached
+  if (cached) return sortFeedItemsByDate(cached)
 
   const pending = inFlightRequests.get(feedUrl)
   if (pending) return pending
@@ -153,8 +162,9 @@ export async function fetchFeed(feedUrl: string): Promise<ParsedFeed> {
 
   const isAtom = doc.documentElement.localName === 'feed'
     const parsedFeed = isAtom ? parseAtom(doc) : parseRss(doc)
-    writeCachedFeed(feedUrl, parsedFeed)
-    return parsedFeed
+    const sorted = sortFeedItemsByDate(parsedFeed)
+    writeCachedFeed(feedUrl, sorted)
+    return sorted
   })().finally(() => {
     inFlightRequests.delete(feedUrl)
   })
