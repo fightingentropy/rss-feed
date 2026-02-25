@@ -205,6 +205,10 @@ ${feedContext || 'No feeds loaded yet.'}
         },
       },
     ],
+    server: {
+      port: 3000,
+      strictPort: true,
+    },
     resolve: {
       alias: { '@': path.resolve(__dirname, './src') },
     },

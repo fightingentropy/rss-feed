@@ -13,7 +13,7 @@ bun dev
 
 - Dark theme, terminal look (green/amber on black, monospace)
 - shadcn-style Card, Button, ScrollArea
-- Preloaded popular feeds: Hacker News, The Verge, Ars Technica, TechCrunch, Wired, BBC News, Reuters, Lobsters
+- Preloaded popular feeds: Hacker News, The Verge, Ars Technica, TechCrunch, The Information, The Block, Wired, Bloomberg Markets, BBC News, Reuters, Lobsters
 - Three-panel layout: feed list → article list → article detail
 
 ## Stack
