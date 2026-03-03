@@ -1,5 +1,5 @@
 const FEED_API = '/api/feed'
-const FEED_CACHE_PREFIX = 'rss-reader.feed-cache.v1:'
+const FEED_CACHE_PREFIX = 'rss-reader.feed-cache.v2:'
 const FEED_CACHE_TTL_MS = 5 * 60 * 1000
 
 type CachedFeedRecord = {
@@ -34,6 +34,27 @@ function html(el: Element | null | undefined): string {
 
 function attr(el: Element | null | undefined, name: string): string {
   return el?.getAttribute(name)?.trim() ?? ''
+}
+
+function localNameIs(el: Element | null | undefined, expected: string): boolean {
+  return (el?.localName ?? '').toLowerCase() === expected.toLowerCase()
+}
+
+function directChildren(el: Element | null | undefined): Element[] {
+  return el ? Array.from(el.children) : []
+}
+
+function findDirectChild(
+  parent: Element | null | undefined,
+  localNames: string | string[]
+): Element | null {
+  const names = new Set((Array.isArray(localNames) ? localNames : [localNames]).map((name) => name.toLowerCase()))
+  return directChildren(parent).find((child) => names.has((child.localName ?? '').toLowerCase())) ?? null
+}
+
+function findDirectChildren(parent: Element | null | undefined, localName: string): Element[] {
+  const expected = localName.toLowerCase()
+  return directChildren(parent).filter((child) => (child.localName ?? '').toLowerCase() === expected)
 }
 
 function prepareXml(xml: string): string {
@@ -78,9 +99,15 @@ function isFresh(record: CachedFeedRecord): boolean {
 }
 
 function sortFeedItemsByDate(feed: ParsedFeed): ParsedFeed {
+  const timestamp = (value?: string): number => {
+    if (!value) return 0
+    const t = new Date(value).getTime()
+    return Number.isFinite(t) ? t : 0
+  }
+
   const sorted = [...feed.items].sort((a, b) => {
-    const dateA = a.pubDate ? new Date(a.pubDate).getTime() : 0
-    const dateB = b.pubDate ? new Date(b.pubDate).getTime() : 0
+    const dateA = timestamp(a.pubDate)
+    const dateB = timestamp(b.pubDate)
     return dateB - dateA
   })
   return { ...feed, items: sorted }
@@ -174,24 +201,30 @@ export async function fetchFeed(feedUrl: string): Promise<ParsedFeed> {
 }
 
 function parseRss(doc: Document): ParsedFeed {
-  const channel = doc.querySelector('channel')
-  const title = text(channel?.querySelector('title')) || 'Untitled'
-  const link = text(channel?.querySelector('link')) || attr(channel?.querySelector('link'), 'href') || ''
+  const channel = Array.from(doc.documentElement.children).find((el) => localNameIs(el, 'channel')) ?? null
+  const channelTitleEl = findDirectChild(channel, 'title')
+  const channelLinkEl = findDirectChild(channel, 'link')
+  const title = text(channelTitleEl) || 'Untitled'
+  const link = text(channelLinkEl) || attr(channelLinkEl, 'href') || ''
   const items: FeedItem[] = []
-  doc.querySelectorAll('item').forEach((item) => {
+  findDirectChildren(channel, 'item').forEach((item) => {
+    const itemTitleEl = findDirectChild(item, 'title')
+    const itemLinkEl = findDirectChild(item, 'link')
+    const itemGuidEl = findDirectChild(item, 'guid')
+    const itemPubDateEl = findDirectChild(item, 'pubDate')
     const itemLink =
-      text(item.querySelector('link')) ||
-      attr(item.querySelector('link'), 'href') ||
-      text(item.querySelector('guid')) ||
+      text(itemLinkEl) ||
+      attr(itemLinkEl, 'href') ||
+      text(itemGuidEl) ||
       ''
-    const descEl = item.querySelector('description')
-    const encodedEl = Array.from(item.children).find((el) => el.localName === 'encoded')
+    const descEl = findDirectChild(item, 'description')
+    const encodedEl = findDirectChild(item, 'encoded')
     const contentHtml = html(encodedEl) || html(descEl) || ''
     const contentPlain = text(descEl) || text(encodedEl) || ''
     items.push({
-      title: text(item.querySelector('title')) || 'Untitled',
+      title: text(itemTitleEl) || 'Untitled',
       link: itemLink,
-      pubDate: text(item.querySelector('pubDate')) || undefined,
+      pubDate: text(itemPubDateEl) || undefined,
       contentSnippet: contentPlain.slice(0, 500),
       content: contentHtml || undefined,
     })
@@ -201,25 +234,37 @@ function parseRss(doc: Document): ParsedFeed {
 
 function parseAtom(doc: Document): ParsedFeed {
   const feed = doc.documentElement
-  const titleEl = feed.querySelector('title')
+  const titleEl = findDirectChild(feed, 'title')
   const title = titleEl ? (titleEl.childNodes[0]?.nodeValue?.trim() ?? text(titleEl)) : 'Untitled'
-  const linkEl = feed.querySelector('link[rel="alternate"], link[type="text/html"]')
+  const feedLinks = findDirectChildren(feed, 'link')
+  const linkEl =
+    feedLinks.find((el) => (attr(el, 'rel') || '').toLowerCase() === 'alternate') ||
+    feedLinks.find((el) => (attr(el, 'type') || '').toLowerCase() === 'text/html') ||
+    feedLinks[0] ||
+    null
   const link = attr(linkEl, 'href') || text(linkEl) || ''
   const items: FeedItem[] = []
-  doc.querySelectorAll('entry').forEach((entry) => {
-    const linkEl = entry.querySelector('link[rel="alternate"], link[type="text/html"], link')
+  findDirectChildren(feed, 'entry').forEach((entry) => {
+    const entryLinks = findDirectChildren(entry, 'link')
+    const linkEl =
+      entryLinks.find((el) => (attr(el, 'rel') || '').toLowerCase() === 'alternate') ||
+      entryLinks.find((el) => (attr(el, 'type') || '').toLowerCase() === 'text/html') ||
+      entryLinks[0] ||
+      null
     const itemLink = attr(linkEl, 'href') || text(linkEl) || ''
-    const contentEl = entry.querySelector('content')
-    const summaryEl = entry.querySelector('summary')
+    const contentEl = findDirectChild(entry, 'content')
+    const summaryEl = findDirectChild(entry, 'summary')
     const type = contentEl?.getAttribute('type') ?? ''
     const contentHtml =
       type === 'html' || type === 'xhtml' ? html(contentEl) || html(summaryEl) || '' : text(contentEl) || text(summaryEl) || ''
     const contentPlain = text(contentEl) || text(summaryEl) || ''
+    const titleEl = findDirectChild(entry, 'title')
+    const updatedEl = findDirectChild(entry, 'updated')
+    const publishedEl = findDirectChild(entry, 'published')
     items.push({
-      title: text(entry.querySelector('title')) || 'Untitled',
+      title: text(titleEl) || 'Untitled',
       link: itemLink,
-      pubDate:
-        text(entry.querySelector('updated')) || text(entry.querySelector('published')) || undefined,
+      pubDate: text(updatedEl) || text(publishedEl) || undefined,
       contentSnippet: contentPlain.slice(0, 500),
       content: contentHtml || undefined,
     })

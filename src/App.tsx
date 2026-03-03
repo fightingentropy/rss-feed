@@ -38,6 +38,83 @@ function formatDate(pubDate?: string) {
     : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 }
 
+function normalizePreviewText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function normalizeForComparison(value: string): string {
+  return normalizePreviewText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isDuplicateText(a: string, b: string): boolean {
+  if (!a || !b) return false
+  return normalizeForComparison(a) === normalizeForComparison(b)
+}
+
+function decodeHtmlEntities(value: string): string {
+  if (!value) return ''
+
+  if (typeof window === 'undefined') {
+    return value
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+  }
+
+  const doc = new DOMParser().parseFromString(value, 'text/html')
+  return doc.documentElement.textContent ?? ''
+}
+
+function maybeDecodeEncodedHtml(value: string): string {
+  let current = value
+
+  for (let i = 0; i < 3; i += 1) {
+    const looksEncodedHtml =
+      /&lt;\s*\/?\s*[a-z]/i.test(current) ||
+      /&#x?0*3c;\s*\/?\s*[a-z]/i.test(current)
+
+    if (!looksEncodedHtml) break
+
+    const decoded = decodeHtmlEntities(current)
+    if (!decoded || decoded === current) break
+    current = decoded
+  }
+
+  return current
+}
+
+function stripHtmlToText(value: string): string {
+  if (!value) return ''
+
+  const normalizedValue = maybeDecodeEncodedHtml(value)
+
+  if (typeof window === 'undefined') {
+    return normalizePreviewText(normalizedValue.replace(/<[^>]*>/g, ' '))
+  }
+
+  const doc = new DOMParser().parseFromString(normalizedValue, 'text/html')
+  return normalizePreviewText(doc.body?.textContent ?? '')
+}
+
+function getArticlePreview(item: FeedItem): string {
+  const preview = stripHtmlToText(item.contentSnippet ?? '')
+  if (preview) return preview
+
+  const contentPreview = stripHtmlToText(item.content ?? '')
+  return contentPreview ? contentPreview.slice(0, 500) : ''
+}
+
+function hasHtmlMarkup(value: string): boolean {
+  return /<[^>]+>/.test(value)
+}
+
 function cloneDefaultFeeds(): FeedMeta[] {
   return POPULAR_FEEDS.map((feed) => ({ ...feed }))
 }
@@ -111,6 +188,30 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [selectedItem, setSelectedItem] = useState<FeedItem | null>(null)
   const [loadedFeeds, setLoadedFeeds] = useState<Map<string, ParsedFeed>>(new Map())
+
+  const selectedItemPreview = selectedItem ? getArticlePreview(selectedItem) : ''
+  const selectedItemDecodedContent = selectedItem?.content
+    ? maybeDecodeEncodedHtml(selectedItem.content).trim()
+    : ''
+  const selectedItemSanitizedContent = selectedItemDecodedContent
+    ? sanitizeHtml(selectedItemDecodedContent).trim()
+    : ''
+  const selectedItemHasHtmlBody =
+    selectedItemSanitizedContent.length > 0 && hasHtmlMarkup(selectedItemSanitizedContent)
+  const selectedItemPlainBody = selectedItemHasHtmlBody
+    ? ''
+    : stripHtmlToText(selectedItemSanitizedContent)
+  const selectedItemBodyText = selectedItemSanitizedContent
+    ? stripHtmlToText(selectedItemSanitizedContent)
+    : ''
+  const selectedItemUniquePreview =
+    isDuplicateText(selectedItemPreview, selectedItem?.title ?? '')
+      ? ''
+      : selectedItemPreview
+  const selectedItemHasUniqueBody =
+    !!selectedItemBodyText &&
+    !isDuplicateText(selectedItemBodyText, selectedItem?.title ?? '') &&
+    !isDuplicateText(selectedItemBodyText, selectedItemUniquePreview)
 
   useEffect(() => {
     try {
@@ -350,19 +451,34 @@ function App() {
                       )}
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    {selectedItem.content ? (
+                  <CardContent className="space-y-3">
+                    {selectedItemUniquePreview && (
+                      <div className="rounded border border-terminal-border/70 bg-terminal-dim/30 px-3 py-2">
+                        <div className="mb-1 text-[10px] uppercase tracking-wider text-terminal-muted">
+                          Preview
+                        </div>
+                        <p className="whitespace-pre-wrap leading-relaxed text-terminal-text">
+                          {selectedItemUniquePreview}
+                        </p>
+                      </div>
+                    )}
+
+                    {selectedItemHasHtmlBody && selectedItemHasUniqueBody ? (
                       <div
                         className="article-body max-w-none text-terminal-muted [&_a]:text-terminal-accent [&_a]:underline [&_figure]:my-3 [&_figcaption]:hidden [&_img]:max-h-80 [&_img]:w-auto [&_img]:rounded [&_img]:border [&_img]:border-terminal-border [&_p]:mb-2 [&_p]:leading-relaxed"
                         dangerouslySetInnerHTML={{
-                          __html: sanitizeHtml(selectedItem.content),
+                          __html: selectedItemSanitizedContent,
                         }}
                       />
-                    ) : (
+                    ) : !selectedItemHasHtmlBody && selectedItemPlainBody && selectedItemHasUniqueBody ? (
                       <p className="whitespace-pre-wrap text-terminal-muted">
-                        {selectedItem.contentSnippet || 'No content.'}
+                        {selectedItemPlainBody}
                       </p>
-                    )}
+                    ) : !selectedItemUniquePreview ? (
+                      <p className="whitespace-pre-wrap text-terminal-muted">
+                        No excerpt available from this feed item.
+                      </p>
+                    ) : null}
                   </CardContent>
                 </Card>
               ) : (
